@@ -1,0 +1,4 @@
+target/
+dist/
+xlsx-assoc.properties
+*.class
