@@ -14,7 +14,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  * SPDX-License-Identifier: GPL-3.0-only
  */
-package sheetworks;
+package me.kost.adam.dev.sheetworks;
 
 /** What a sheet grid needs from the window that contains it. */
 interface SheetHost {

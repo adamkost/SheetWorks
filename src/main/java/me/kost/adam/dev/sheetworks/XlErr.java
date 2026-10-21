@@ -14,7 +14,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  * SPDX-License-Identifier: GPL-3.0-only
  */
-package sheetworks;
+package me.kost.adam.dev.sheetworks;
 
 /** A spreadsheet error value. It is both a value stored in cells and an exception used to propagate errors. */
 public final class XlErr extends RuntimeException {
