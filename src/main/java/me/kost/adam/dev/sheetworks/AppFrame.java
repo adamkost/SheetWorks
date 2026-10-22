@@ -54,6 +54,8 @@ import javax.swing.JToolBar;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import javax.swing.event.MenuEvent;
+import javax.swing.event.MenuListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
 
 /** A document window: menus, toolbar, formula bar, one tab per sheet, and a status bar. */
@@ -83,7 +85,7 @@ final class AppFrame extends JFrame implements SheetHost {
     /** Opens a file in a window (reusing the window if it is already open). Returns false on failure. */
     static boolean openPath(Path p) {
         for (AppFrame f : FRAMES) {
-            if (f.wb.path != null && sameFile(f.wb.path, p)) { f.setState(NORMAL); f.toFront(); return true; }
+            if (f.wb.path != null && sameFile(f.wb.path, p)) { f.setState(NORMAL); f.toFront(); RecentFiles.shared().add(p); return true; }
         }
         try {
             String n = p.getFileName().toString().toLowerCase(Locale.ROOT);
@@ -95,11 +97,15 @@ final class AppFrame extends JFrame implements SheetHost {
                 wb = XlsxIO.read(p);
             }
             AppFrame cur = FRAMES.isEmpty() ? null : FRAMES.get(FRAMES.size() - 1);
-            if (cur != null && cur.isPristine()) { cur.setWorkbook(wb); return true; }
-            new AppFrame(wb);
+            if (cur != null && cur.isPristine()) cur.setWorkbook(wb); else new AppFrame(wb);
+            RecentFiles.shared().add(p);
             return true;
         } catch (IOException | RuntimeException e) {
-            JOptionPane.showMessageDialog(null, "Could not open " + p + "\n\n" + e.getMessage(), "SheetWorks", JOptionPane.ERROR_MESSAGE);
+            boolean gone = !Files.exists(p);
+            if (gone) RecentFiles.shared().remove(p);
+            JOptionPane.showMessageDialog(null, "Could not open " + p + "\n\n" + e.getMessage()
+                    + (gone ? "\n\nThe file no longer exists, so it was removed from the recent files list." : ""),
+                    "SheetWorks", JOptionPane.ERROR_MESSAGE);
             return false;
         }
     }
@@ -222,6 +228,7 @@ final class AppFrame extends JFrame implements SheetHost {
         JMenu file = new JMenu("File");
         file.add(item("New", KeyEvent.VK_N, mask, () -> openNew()));
         file.add(item("Open…", KeyEvent.VK_O, mask, this::openDialog));
+        file.add(recentMenu());
         file.addSeparator();
         file.add(item("Save", KeyEvent.VK_S, mask, () -> save()));
         file.add(item("Save As…", KeyEvent.VK_S, mask | KeyEvent.SHIFT_DOWN_MASK, () -> saveAs()));
@@ -285,6 +292,45 @@ final class AppFrame extends JFrame implements SheetHost {
                 "About SheetWorks", JOptionPane.INFORMATION_MESSAGE)));
         mb.add(help);
         return mb;
+    }
+
+    /** "Open Recent" submenu; its items are rebuilt from the shared list each time the menu is opened. */
+    private JMenu recentMenu() {
+        final JMenu m = new JMenu("Open Recent");
+        m.addMenuListener(new MenuListener() {
+            @Override public void menuSelected(MenuEvent e) { fillRecent(m); }
+            @Override public void menuDeselected(MenuEvent e) { }
+            @Override public void menuCanceled(MenuEvent e) { }
+        });
+        fillRecent(m);
+        return m;
+    }
+
+    private void fillRecent(JMenu m) {
+        m.removeAll();
+        List<Path> files = RecentFiles.shared().list();
+        if (files.isEmpty()) {
+            JMenuItem none = new JMenuItem("(No recent files)");
+            none.setEnabled(false);
+            m.add(none);
+            return;
+        }
+        for (int i = 0; i < files.size(); i++) {
+            final Path p = files.get(i);
+            JMenuItem it = item(recentLabel(i, p), 0, 0, () -> openPath(p));
+            it.setToolTipText(p.toString());
+            if (i < 9) it.setMnemonic('1' + i);
+            m.add(it);
+        }
+        m.addSeparator();
+        m.add(item("Clear Recent Files", 0, 0, () -> RecentFiles.shared().clear()));
+    }
+
+    private static String recentLabel(int i, Path p) {
+        Path name = p.getFileName();
+        String dir = p.getParent() == null ? "" : p.getParent().toString();
+        if (dir.length() > 50) dir = "\u2026" + dir.substring(dir.length() - 49);
+        return (i + 1) + "  " + (name == null ? p.toString() : name.toString()) + (dir.isEmpty() ? "" : "   -   " + dir);
     }
 
     private static String wrap(String s, int width) {
@@ -481,6 +527,7 @@ final class AppFrame extends JFrame implements SheetHost {
             return false;
         }
         wb.path = p;
+        RecentFiles.shared().add(p);
         wb.foreignXlsx = false;
         wb.dirty = false;
         startWatching(null); // our own write must not look like an outside change

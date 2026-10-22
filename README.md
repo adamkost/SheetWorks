@@ -11,6 +11,7 @@ Copyright (C) 2026 Adam Kost. Licensed under the GNU General Public License vers
 - [Build, test and run](#build-test-and-run)
 - [Opening .xlsx files by double-click](#opening-xlsx-files-by-double-click)
 - [Features](#features)
+- [Recent files](#recent-files)
 - [Changes made to the open file by other programs](#changes-made-to-the-open-file-by-other-programs)
 - [What is preserved in .xlsx files](#what-is-preserved-in-xlsx-files)
 - [Working on the code](#working-on-the-code)
@@ -129,6 +130,7 @@ Finder through the standard macOS open-file event. Without jpackage you can stil
   Excel format code), column widths.
 - Copy, cut and paste (formulas adjust like Excel), fill down and right, sort, undo and redo.
 - Open and save `.xlsx`; open CSV and export the current sheet to CSV.
+- File > Open Recent lists the ten most recently used files.
 - Notices when another program changes the open file and offers to reload it.
 - Closing a file (File > Close Window, Ctrl/Cmd+W, or the window's close button) leaves SheetWorks running: when the last
   window is closed it switches to a new empty workbook. Use File > Exit (or Cmd+Q on macOS) to quit.
@@ -136,6 +138,23 @@ Finder through the standard macOS open-file event. Without jpackage you can stil
 Keyboard: type to replace a cell, F2 or double-click to edit it, Enter or Tab to move, Delete to clear.
 Shortcuts use Ctrl on Windows and Linux and Cmd on macOS: N, O, S, Shift+S, W, Z, Y, D (fill down), R (fill right), B, I.
 Start text with `'` to keep it as text (for example `'00123`).
+
+## Recent files
+File > Open Recent lists the ten files you used most recently, newest first, and opens one when you pick it. Items 1 to 9
+can also be chosen with their number key while the menu is open. Hover over an item to see the full path.
+
+- A file is added (or moved to the top) when you open it, including from the command line or by double-click, and when you
+  save it with Save or Save As. CSV files you import are listed too.
+- If you pick a file that no longer exists, SheetWorks says so and removes it from the list.
+- File > Open Recent > Clear Recent Files empties the list.
+- The list is shared by all SheetWorks windows and by separate runs of the program. It is stored as a plain text file, one
+  path per line, in your user configuration folder; delete the file to reset it:
+
+  | System | Location |
+  | --- | --- |
+  | Windows | `%APPDATA%\SheetWorks\recent-files.txt` |
+  | macOS | `~/Library/Application Support/SheetWorks/recent-files.txt` |
+  | Linux and others | `$XDG_CONFIG_HOME/sheetworks/recent-files.txt`, or `~/.config/sheetworks/recent-files.txt` |
 
 ## Changes made to the open file by other programs
 SheetWorks watches the `.xlsx` file each window has open (once a second, by modification time and size). When the file
@@ -174,7 +193,7 @@ formulas that use the old name.
   project; use File > Open / Import and pick `pom.xml`.
 - **Tests:** JUnit 5, in `src/test/java`. They never open a window (the build passes `-Djava.awt.headless=true`), so they
   also run on servers and CI. They cover the formula engine, number and date formats, the `.xlsx` and CSV round trips,
-  the grid component, and the change detection for the open file.
+  the grid component, the change detection for the open file, and the recent files list.
 - **Coordinates:** `groupId` is `me.kost.adam.dev` and the version is `1.0.0` in `pom.xml`; change them there if you publish
   the project. All code is in the Java package `me.kost.adam.dev.sheetworks`, and the program starts at
   `me.kost.adam.dev.sheetworks.Main`. The jar name stays `target/sheetworks.jar` whatever the version (`<finalName>` in the pom).
@@ -205,7 +224,8 @@ src/main/java/me/kost/adam/dev/sheetworks/    All application code (package me.k
     Formula, NumFmt                           formula parser and functions, number and date formats
     XlsxIO, Csv                               file formats
     FileWatcher                               detects outside changes to the open file
-src/test/java/me/kost/adam/dev/sheetworks/    FormulaTest, NumFmtTest, FileRoundTripTest, GridTest, FileWatcherTest
+    RecentFiles                               the most recently used files list
+src/test/java/me/kost/adam/dev/sheetworks/    FormulaTest, NumFmtTest, FileRoundTripTest, GridTest, FileWatcherTest, RecentFilesTest
 run.bat, register-xlsx.bat, unregister-xlsx.bat   Windows helpers
 target/                                       Build output (created by Maven, not committed)
 ```
