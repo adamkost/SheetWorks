@@ -53,6 +53,7 @@ import javax.swing.JTextField;
 import javax.swing.JToolBar;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import javax.swing.filechooser.FileNameExtensionFilter;
 
 /** A document window: menus, toolbar, formula bar, one tab per sheet, and a status bar. */
@@ -70,6 +71,9 @@ final class AppFrame extends JFrame implements SheetHost {
     private final JLabel stats = new JLabel("");
     private final JComboBox<String> fmtBox = new JComboBox<>(FMT_LABELS);
     private boolean updating;
+    private FileWatcher watcher;
+    private Timer watchTimer;
+    private boolean changePending, prompting;
     private final int mask = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
 
     // ------------------------------------------------------------------ opening
@@ -111,7 +115,10 @@ final class AppFrame extends JFrame implements SheetHost {
     AppFrame(Workbook wb) {
         super("SheetWorks");
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
-        addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent e) { closeWindow(); } });
+        addWindowListener(new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) { closeWindow(); }
+            @Override public void windowActivated(WindowEvent e) { checkFileChanged(); }
+        });
 
         JToolBar tb = new JToolBar();
         tb.setFloatable(false);
@@ -187,7 +194,9 @@ final class AppFrame extends JFrame implements SheetHost {
         return b;
     }
 
-    private void setWorkbook(Workbook w) {
+    private void setWorkbook(Workbook w) { setWorkbook(w, null); }
+
+    private void setWorkbook(Workbook w, FileWatcher preset) {
         this.wb = w;
         tabs.removeAll();
         for (Sheet s : w.sheets) tabs.addTab(s.name, new SheetPanel(this, w, s));
@@ -195,6 +204,7 @@ final class AppFrame extends JFrame implements SheetHost {
         updateTitle();
         updateInfo();
         if (w.foreignXlsx) status.setText("Opened " + w.path.getFileName());
+        startWatching(preset);
     }
 
     private SheetPanel cur() { return (SheetPanel) tabs.getSelectedComponent(); }
@@ -473,6 +483,7 @@ final class AppFrame extends JFrame implements SheetHost {
         wb.path = p;
         wb.foreignXlsx = false;
         wb.dirty = false;
+        startWatching(null); // our own write must not look like an outside change
         status.setText("Saved " + p.getFileName());
         updateTitle();
         return true;
@@ -496,6 +507,73 @@ final class AppFrame extends JFrame implements SheetHost {
         }
     }
 
+    // ------------------------------------------------------------------ outside changes
+
+    /** Starts (or restarts) watching the file this window has open. Windows without a file on disk are not watched. */
+    private void startWatching(FileWatcher preset) {
+        if (watchTimer != null) { watchTimer.stop(); watchTimer = null; }
+        watcher = null;
+        changePending = false;
+        if (wb.path == null) return;
+        watcher = preset != null ? preset : new FileWatcher(wb.path);
+        watchTimer = new Timer(1000, e -> checkFileChanged());
+        watchTimer.start();
+    }
+
+    private void checkFileChanged() {
+        if (watcher == null || prompting) return;
+        if (!changePending && watcher.poll()) changePending = true;
+        // Only interrupt the user while this window is in front; otherwise ask when they come back to it.
+        if (changePending && isActive()) promptReload();
+    }
+
+    private void promptReload() {
+        prompting = true;
+        try {
+            boolean dirty = wb.dirty;
+            String msg = "\"" + wb.path.getFileName() + "\" was changed by another program.\n\n"
+                    + (dirty ? "You also have unsaved changes in SheetWorks. Reloading discards them;\n"
+                            + "if you keep your version, saving will overwrite the other changes.\n\n" : "")
+                    + "Reload it from disk?";
+            Object[] opts = {"Reload", "Keep My Version"};
+            int ch = JOptionPane.showOptionDialog(this, msg, "File Changed", JOptionPane.DEFAULT_OPTION,
+                    JOptionPane.WARNING_MESSAGE, null, opts, dirty ? opts[1] : opts[0]);
+            changePending = false;
+            if (ch == 0) reloadFromDisk();
+            else if (watcher != null) watcher.rebase(); // do not ask again until the file changes again
+        } finally {
+            prompting = false;
+        }
+    }
+
+    /** Closes the current contents and reopens the file from disk, discarding any unsaved edits and the undo history. */
+    private void reloadFromDisk() {
+        Path p = wb.path;
+        int tab = tabs.getSelectedIndex();
+        int[] cell = cur() == null ? new int[] {0, 0} : cur().active();
+        FileWatcher fresh = new FileWatcher(p); // taken before reading, so a change during the read is noticed
+        try {
+            setWorkbook(XlsxIO.read(p), fresh);
+        } catch (IOException | RuntimeException e) {
+            if (watcher != null) watcher.rebase();
+            JOptionPane.showMessageDialog(this, "Could not reload " + p.getFileName() + "\n\n" + e.getMessage()
+                    + "\n\nYour current version is unchanged.", "SheetWorks", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if (tab >= 0 && tab < tabs.getTabCount()) tabs.setSelectedIndex(tab);
+        SheetPanel sp = cur();
+        if (sp != null) {
+            sp.table.changeSelection(Math.min(cell[0], sp.rows - 1), Math.min(cell[1], sp.cols - 1), false, false);
+            sp.table.requestFocusInWindow();
+        }
+        status.setText("Reloaded " + p.getFileName());
+    }
+
+    @Override public void dispose() {
+        if (watchTimer != null) { watchTimer.stop(); watchTimer = null; }
+        super.dispose();
+    }
+
     // ------------------------------------------------------------------ closing
 
     private boolean confirmDiscard() {
@@ -508,20 +586,37 @@ final class AppFrame extends JFrame implements SheetHost {
         return ch == JOptionPane.NO_OPTION;
     }
 
+    /**
+     * Closes this window's file. The last window is not closed: it switches to a new empty workbook, so closing a
+     * file leaves the application running. Use File > Exit to quit.
+     */
     private void closeWindow() {
         if (!confirmDiscard()) return;
+        if (FRAMES.size() == 1) {
+            setWorkbook(Workbook.blank());
+            status.setText("Ready");
+            if (cur() != null) cur().table.requestFocusInWindow();
+            return;
+        }
         FRAMES.remove(this);
         dispose();
-        if (FRAMES.isEmpty()) System.exit(0);
     }
 
-    static void exitAll() {
-        for (AppFrame f : new ArrayList<>(FRAMES)) {
+    /** Asks about unsaved changes in every window, then closes them all. Returns false if the user cancelled. */
+    static boolean closeAll() {
+        List<AppFrame> all = new ArrayList<>(FRAMES);
+        for (AppFrame f : all) {
             f.toFront();
-            if (!f.confirmDiscard()) return;
+            if (!f.confirmDiscard()) return false;
+        }
+        for (AppFrame f : all) {
             FRAMES.remove(f);
             f.dispose();
         }
-        System.exit(0);
+        return true;
+    }
+
+    static void exitAll() {
+        if (closeAll()) System.exit(0);
     }
 }

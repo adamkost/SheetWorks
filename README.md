@@ -11,6 +11,7 @@ Copyright (C) 2026 Adam Kost. Licensed under the GNU General Public License vers
 - [Build, test and run](#build-test-and-run)
 - [Opening .xlsx files by double-click](#opening-xlsx-files-by-double-click)
 - [Features](#features)
+- [Changes made to the open file by other programs](#changes-made-to-the-open-file-by-other-programs)
 - [What is preserved in .xlsx files](#what-is-preserved-in-xlsx-files)
 - [Working on the code](#working-on-the-code)
 - [Troubleshooting](#troubleshooting)
@@ -107,7 +108,7 @@ A `.jar` cannot be chosen directly as the program for a file type, so wrap it as
 mkdir -p dist && cp target/sheetworks.jar dist/
 printf 'extension=xlsx\nmime-type=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\ndescription=Excel workbook\n' > xlsx-assoc.properties
 jpackage --type app-image --name SheetWorks --input dist --main-jar sheetworks.jar \
-         --main-class sheetworks.Main --file-associations xlsx-assoc.properties
+         --main-class me.kost.adam.dev.sheetworks.Main --file-associations xlsx-assoc.properties
 ```
 This creates `SheetWorks.app` in the current folder. Move it to `/Applications`, then in Finder select an `.xlsx` file, press
 Cmd+I (Get Info), choose SheetWorks under "Open with", and click "Change All...". SheetWorks handles files opened from
@@ -128,10 +129,33 @@ Finder through the standard macOS open-file event. Without jpackage you can stil
   Excel format code), column widths.
 - Copy, cut and paste (formulas adjust like Excel), fill down and right, sort, undo and redo.
 - Open and save `.xlsx`; open CSV and export the current sheet to CSV.
+- Notices when another program changes the open file and offers to reload it.
+- Closing a file (File > Close Window, Ctrl/Cmd+W, or the window's close button) leaves SheetWorks running: when the last
+  window is closed it switches to a new empty workbook. Use File > Exit (or Cmd+Q on macOS) to quit.
 
 Keyboard: type to replace a cell, F2 or double-click to edit it, Enter or Tab to move, Delete to clear.
 Shortcuts use Ctrl on Windows and Linux and Cmd on macOS: N, O, S, Shift+S, W, Z, Y, D (fill down), R (fill right), B, I.
 Start text with `'` to keep it as text (for example `'00123`).
+
+## Changes made to the open file by other programs
+SheetWorks watches the `.xlsx` file each window has open (once a second, by modification time and size). When the file
+changes on disk, for example because someone saved it from Excel or a sync tool replaced it, SheetWorks asks whether to
+reload it:
+
+- **Reload** closes the current contents and reopens the file from disk. Any unsaved edits in the window, and its undo
+  history, are discarded. The window returns to the same sheet and cell where possible.
+- **Keep My Version** leaves the window as it is and does not ask again until the file changes once more. If you had
+  unsaved edits and then save, you overwrite the other program's changes.
+
+Details:
+- The question appears only while the SheetWorks window is in front. If the change happens while you are in another
+  program, SheetWorks asks when you switch back to it.
+- A file that is still being written is not read half-finished: the change is reported once the file has stopped changing.
+- If the file is deleted nothing happens, and saving recreates it. If the reload fails (for example the other program left
+  a broken file), you get an error message and your current version is kept.
+- Saving from SheetWorks itself does not trigger the question. CSV files are imported rather than edited in place, so they
+  are not watched.
+- Timestamps on some network drives are coarse or delayed, so detection there can lag.
 
 ## What is preserved in .xlsx files
 Saved: values, formulas (with their calculated results), sheet names and order, number formats, bold/italic, font and fill
@@ -150,9 +174,10 @@ formulas that use the old name.
   project; use File > Open / Import and pick `pom.xml`.
 - **Tests:** JUnit 5, in `src/test/java`. They never open a window (the build passes `-Djava.awt.headless=true`), so they
   also run on servers and CI. They cover the formula engine, number and date formats, the `.xlsx` and CSV round trips,
-  and the grid component.
-- **Coordinates:** `groupId` is `com.adamkost` and the version is `1.0.0` in `pom.xml`; change them there if you publish
-  the project. The jar name stays `target/sheetworks.jar` whatever the version (`<finalName>` in the pom).
+  the grid component, and the change detection for the open file.
+- **Coordinates:** `groupId` is `me.kost.adam.dev` and the version is `1.0.0` in `pom.xml`; change them there if you publish
+  the project. All code is in the Java package `me.kost.adam.dev.sheetworks`, and the program starts at
+  `me.kost.adam.dev.sheetworks.Main`. The jar name stays `target/sheetworks.jar` whatever the version (`<finalName>` in the pom).
 - **Maven Wrapper (optional):** `mvn wrapper:wrapper` adds `mvnw` / `mvnw.cmd`, so others can build with `./mvnw package`
   without installing Maven.
 - **Runtime dependencies:** none. `.xlsx` files are read and written with the standard Java library only, so keep it that
@@ -172,10 +197,15 @@ formulas that use the old name.
 
 ## Project layout
 ```
-pom.xml                         Maven project file (build, tests, jar manifest)
-src/main/java/sheetworks/       Main, AppFrame (window), SheetPanel (grid), SheetHost, Workbook / Sheet / Cell / Style (model),
-                                Formula (parser and functions), NumFmt (number and date formats), XlsxIO, Csv, XlErr
-src/test/java/sheetworks/       FormulaTest, NumFmtTest, FileRoundTripTest, GridTest
+pom.xml                                       Maven project file (build, tests, jar manifest)
+src/main/java/me/kost/adam/dev/sheetworks/    All application code (package me.kost.adam.dev.sheetworks):
+    Main                                      entry point
+    AppFrame, SheetPanel, SheetHost           window, grid, and the interface between them
+    Workbook, Sheet, Cell, Style, XlErr       document model
+    Formula, NumFmt                           formula parser and functions, number and date formats
+    XlsxIO, Csv                               file formats
+    FileWatcher                               detects outside changes to the open file
+src/test/java/me/kost/adam/dev/sheetworks/    FormulaTest, NumFmtTest, FileRoundTripTest, GridTest, FileWatcherTest
 run.bat, register-xlsx.bat, unregister-xlsx.bat   Windows helpers
-target/                         Build output (created by Maven, not committed)
+target/                                       Build output (created by Maven, not committed)
 ```

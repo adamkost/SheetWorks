@@ -35,6 +35,12 @@ public final class Main {
                         for (File f : ev.getFiles()) SwingUtilities.invokeLater(() -> AppFrame.openPath(f.toPath()));
                     });
                 }
+                if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.APP_QUIT_HANDLER)) {
+                    // Cmd+Q on macOS: ask about unsaved changes in every window, then quit
+                    Desktop.getDesktop().setQuitHandler((ev, response) -> {
+                        if (AppFrame.closeAll()) response.performQuit(); else response.cancelQuit();
+                    });
+                }
             } catch (RuntimeException e) { /* not available on this platform */ }
             boolean any = false;
             for (String a : args) if (AppFrame.openPath(Paths.get(a))) any = true;
